@@ -95,7 +95,26 @@ void show_packet_details(PacketInfo *p) {
         }
     }
 
-    mvwprintw(detail_win, LINES - 6, 2, "[Press q or ESC to return]");
+    int y = 21;
+    mvwprintw(detail_win, y++, 2, "[Raw Packet Dump]");
+
+    for (int i = 0; i < p->raw_len; i += 16) {
+        char hex[49] = {0};
+        char ascii[17] = {0};
+
+        for (int j = 0; j < 16 && (i + j) < p->raw_len; j++) {
+            sprintf(&hex[j * 3], "%02x ", p->raw_data[i + j]);
+            ascii[j] = isprint(p->raw_data[i + j]) ? p->raw_data[i + j] : '.';
+        }
+
+        ascii[16] = '\0';
+        mvwprintw(detail_win, y++, 4, "%04x  %-48s  %s", i, hex, ascii);
+
+        if (y >= getmaxy(detail_win) - 2)
+            break;
+    }
+
+    mvwprintw(detail_win, getmaxy(detail_win) - 2, 2, "[Press q or ESC to return]");
     wrefresh(detail_win);
 
     int ch;
@@ -105,6 +124,17 @@ void show_packet_details(PacketInfo *p) {
     delwin(detail_win);
 }
 
+
+void draw_help_bar() {
+    int y = LINES - 1;
+    move(y, 0);
+    clrtoeol();
+    attron(A_REVERSE);
+    mvprintw(y, 0,
+             " Arrow Keys, PgUp/PgDn: Navigate | Enter: Packet Details | /: Filter, src=IP dst=IP proto=TCP/UDP... | q: Quit");
+    attroff(A_REVERSE);
+}
+
 void draw_table() {
     werase(win);
     box(win, 0, 0);
@@ -112,7 +142,7 @@ void draw_table() {
     mvwprintw(win, 0, 2, " Filter: %s", filter_input);
     mvwprintw(win, 1, 1, "%-5s %-19s %-15s %-15s %-8s", "No.", "Time", "Source", "Destination", "Proto");
 
-    int max_rows = getmaxy(win) - 3;
+    int max_rows = getmaxy(win) - 4;
     int shown = 0, matched = 0;
 
     pthread_mutex_lock(&lock);
@@ -132,14 +162,12 @@ void draw_table() {
     pthread_mutex_unlock(&lock);
 
     wrefresh(win);
+    draw_help_bar();
+    refresh();
 }
 
-void packet_handler(u_char *args, const struct pcap_pkthdr *header, const u_char *packet) {
-    pthread_mutex_lock(&lock);
-    if (packet_count >= MAX_PACKETS) {
-        pthread_mutex_unlock(&lock);
-        return;
-    }
+void add_packet_and_autoscroll(const struct pcap_pkthdr *header, const u_char *packet) {
+    if (packet_count >= MAX_PACKETS) return;
 
     PacketInfo *p = &packets[packet_count];
     time_t rawtime = header->ts.tv_sec;
@@ -169,6 +197,23 @@ void packet_handler(u_char *args, const struct pcap_pkthdr *header, const u_char
     p->raw_len = header->len;
 
     packet_count++;
+
+    int visible_rows = getmaxy(win) - 4;
+    int visible_packets = 0;
+    for (int i = 0; i < packet_count; i++)
+        if (matches_filter(&packets[i])) visible_packets++;
+
+    if (selected_index >= visible_rows - 1) {
+        scroll_offset = visible_packets > visible_rows ? visible_packets - visible_rows : 0;
+        selected_index = visible_rows - 1;
+    } else {
+        selected_index = visible_packets <= visible_rows ? visible_packets - 1 : selected_index;
+    }
+}
+
+void packet_handler(u_char *args, const struct pcap_pkthdr *header, const u_char *packet) {
+    pthread_mutex_lock(&lock);
+    add_packet_and_autoscroll(header, packet);
     pthread_mutex_unlock(&lock);
 }
 
@@ -182,7 +227,7 @@ int main() {
     struct bpf_program fp;
     char filter_exp[] = "ip";
     bpf_u_int32 net, mask;
-    struct pcap_if *alldevs, *device;
+    struct pcap_if *alldevs;
 
     initscr();
     cbreak();
@@ -193,6 +238,7 @@ int main() {
     win = newwin(LINES - 2, COLS - 2, 1, 1);
     box(win, 0, 0);
     wrefresh(win);
+    draw_help_bar();
 
     if (pcap_findalldevs(&alldevs, errbuf) == -1 || alldevs == NULL) {
         endwin();
@@ -241,9 +287,12 @@ int main() {
                 case '/':
                     editing_filter = 1;
                     memset(filter_input, 0, sizeof(filter_input));
+                    selected_index = 0;
+                    scroll_offset = 0;
                     break;
                 case KEY_UP:
                     if (selected_index > 0) selected_index--;
+                    else if (scroll_offset > 0) scroll_offset--;
                     break;
                 case KEY_DOWN:
                     selected_index++;

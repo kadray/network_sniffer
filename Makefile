@@ -1,22 +1,14 @@
-# Compiler and flags
 CC = gcc
-CFLAGS = -Wall -g
+CFLAGS = -Wall -Wextra -O2
 LDFLAGS = -lpcap -lncurses -lpthread
 
-# Files
-SRCS = sniffer.c
-OBJS = $(SRCS:.c=.o)
-TARGET = sniffer
+TARGET = packet_viewer
+SRC = main.c
 
-# Default target
 all: $(TARGET)
 
-$(TARGET): $(OBJS)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+$(TARGET): $(SRC)
+	$(CC) $(CFLAGS) -o $(TARGET) $(SRC) $(LDFLAGS)
 
-%.o: %.c
-	$(CC) $(CFLAGS) -c $< -o $@
-
-# Clean up build files
 clean:
-	rm -f $(OBJS) $(TARGET)
+	rm -f $(TARGET)
