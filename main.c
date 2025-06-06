@@ -21,6 +21,7 @@ typedef struct {
     char proto[10];
     const u_char *raw_data;
     int raw_len;
+    struct pcap_pkthdr header;  // store header for saving packets later
 } PacketInfo;
 
 PacketInfo packets[MAX_PACKETS];
@@ -124,7 +125,6 @@ void show_packet_details(PacketInfo *p) {
     delwin(detail_win);
 }
 
-
 void draw_help_bar() {
     int y = LINES - 1;
     move(y, 0);
@@ -196,6 +196,9 @@ void add_packet_and_autoscroll(const struct pcap_pkthdr *header, const u_char *p
     memcpy((u_char *)p->raw_data, packet, header->len);
     p->raw_len = header->len;
 
+    // Store the original pcap header for saving later
+    memcpy(&p->header, header, sizeof(struct pcap_pkthdr));
+
     packet_count++;
 
     int visible_rows = getmaxy(win) - 4;
@@ -220,6 +223,33 @@ void packet_handler(u_char *args, const struct pcap_pkthdr *header, const u_char
 void *capture_thread_func(void *arg) {
     pcap_loop(handle, -1, packet_handler, NULL);
     return NULL;
+}
+
+// Function to save captured packets to a pcap file
+void save_pcap() {
+    // Generate filename with current date/time
+    time_t now = time(NULL);
+    struct tm *t = localtime(&now);
+    char filename[128];
+    strftime(filename, sizeof(filename), "capture%Y%m%d_%H%M%S.pcap", t);
+
+    pcap_dumper_t *dumper = pcap_dump_open(handle, filename);
+    if (!dumper) {
+        endwin();
+        fprintf(stderr, "Error opening dump file: %s\n", pcap_geterr(handle));
+        return;
+    }
+
+    pthread_mutex_lock(&lock);
+    for (int i = 0; i < packet_count; i++) {
+        pcap_dump((u_char *)dumper, &packets[i].header, packets[i].raw_data);
+    }
+    pthread_mutex_unlock(&lock);
+
+    pcap_dump_close(dumper);
+
+    endwin();
+    printf("Saved captured packets to file: %s\n", filename);
 }
 
 int main() {
@@ -319,8 +349,28 @@ int main() {
 
     pcap_breakloop(handle);
     pthread_join(capture_thread, NULL);
+
+    // Ask user if they want to save capture
+    timeout(-1);  // blocking getch
+    endwin();
+    printf("Do you want to save the captured packets? (y/n): ");
+    int answer = getchar();
+
+    if (answer == 'y' || answer == 'Y') {
+        // Reinitialize curses temporarily for a message (optional)
+        printf("Saving packets...\n");
+        save_pcap();
+    } else {
+        printf("Captured packets were not saved.\n");
+    }
+
     pcap_close(handle);
     pcap_freealldevs(alldevs);
-    endwin();
+
+    // Free allocated packet raw data
+    for (int i = 0; i < packet_count; i++) {
+        free((void *)packets[i].raw_data);
+    }
+
     return 0;
 }
