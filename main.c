@@ -131,7 +131,7 @@ void draw_help_bar() {
     clrtoeol();
     attron(A_REVERSE);
     mvprintw(y, 0,
-             " Arrow Keys, PgUp/PgDn: Navigate | Enter: Packet Details | /: Filter, src=IP dst=IP proto=TCP/UDP... | q: Quit");
+             " Arrow Keys: Navigate | Enter: Packet Details | /: Filter, src=IP dst=IP proto=TCP/UDP... | q: Quit");
     attroff(A_REVERSE);
 }
 
